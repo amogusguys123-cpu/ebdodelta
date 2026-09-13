@@ -1,4 +1,14 @@
---[[ EXÉRCITO BRASILEIRO DO DELTA TREINAMENTO FÍSICO • WINDUI OFICIAL Uso: LocalScript em StarterPlayer > StarterPlayerScripts. Requer o módulo WindUI oficial em: ReplicatedStorage > WindUI > Init Este painel é apenas um apoio manual para avaliação dentro da experiência. Não executa comandos administrativos, não burla o jogo e não altera o servidor. ]]
+--[[
+    EXÉRCITO BRASILEIRO DO DELTA
+    TREINAMENTO FÍSICO • WINDUI OFICIAL
+
+    Uso: LocalScript em StarterPlayer > StarterPlayerScripts.
+    Requer o módulo WindUI oficial em:
+    ReplicatedStorage > WindUI > Init
+
+    Este painel é apenas um apoio manual para avaliação dentro da experiência.
+    Não executa comandos administrativos, não burla o jogo e não altera o servidor.
+]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -6,22 +16,19 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player = Players.LocalPlayer
 
 -- =========================================================
--- WINDUI OFICIAL
--- Compatível com a estrutura oficial do projeto Footagesus/WindUI.
+-- WINDUI REMOTO (CARREGAMENTO UNIVERSAL)
 -- =========================================================
 local WindUI
-do
-    local node = ReplicatedStorage:WaitForChild("WindUI", 10)
-    assert(node, "WindUI não encontrado em ReplicatedStorage.")
+local success, result = pcall(function()
+    return loadstring(game:HttpGet("raw.githubusercontent.com/Footagesus/WindUI/main/main.lua"))()
+end)
 
-    if node:IsA("ModuleScript") then
-        WindUI = require(node)
-    else
-        WindUI = require(node:WaitForChild("Init", 10))
-    end
+if success and result then
+    WindUI = result
+else
+    error("Não foi possível carregar o WindUI remotamente. Verifique seu executador.")
 end
 
-assert(WindUI and WindUI.CreateWindow, "A API oficial do WindUI não foi carregada.")
 
 -- =========================================================
 -- REGRAS DO DOCUMENTO OFICIAL DO EB DELTA
