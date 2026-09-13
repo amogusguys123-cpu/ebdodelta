@@ -1,34 +1,41 @@
--- TREINAMENTO FÍSICO • WINDUI
--- Painel manual para uma experiência autorizada.
--- Requer um ModuleScript chamado "WindUI" em ReplicatedStorage.
--- Coloque este LocalScript em StarterPlayer > StarterPlayerScripts.
+--[[ EXÉRCITO BRASILEIRO DO DELTA TREINAMENTO FÍSICO • WINDUI OFICIAL Uso: LocalScript em StarterPlayer > StarterPlayerScripts. Requer o módulo WindUI oficial em: ReplicatedStorage > WindUI > Init Este painel é apenas um apoio manual para avaliação dentro da experiência. Não executa comandos administrativos, não burla o jogo e não altera o servidor. ]]
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local WindUI = require(
-    ReplicatedStorage:WaitForChild("WindUI")
-)
+local player = Players.LocalPlayer
 
 -- =========================================================
--- REGRAS OFICIAIS DO DOCUMENTO
+-- WINDUI OFICIAL
+-- Compatível com a estrutura oficial do projeto Footagesus/WindUI.
 -- =========================================================
+local WindUI
+do
+    local node = ReplicatedStorage:WaitForChild("WindUI", 10)
+    assert(node, "WindUI não encontrado em ReplicatedStorage.")
 
+    if node:IsA("ModuleScript") then
+        WindUI = require(node)
+    else
+        WindUI = require(node:WaitForChild("Init", 10))
+    end
+end
+
+assert(WindUI and WindUI.CreateWindow, "A API oficial do WindUI não foi carregada.")
+
+-- =========================================================
+-- REGRAS DO DOCUMENTO OFICIAL DO EB DELTA
+-- =========================================================
 local RULES = {
     ["Praças"] = {
         jj = 150,
         jjTime = 210,
         pass = 4,
-
         parkours = {
             A = {35, 40, 30, 32},
             B = {30, 35, 30, 28},
             C = {30, 35, 35, 40},
             D = {35, 30, 30, 40},
-        },
-
-        tower = {
-            ["PC e CONSOLE"] = 15,
-            ["CELULAR"] = 16,
         },
     },
 
@@ -36,790 +43,641 @@ local RULES = {
         jj = 170,
         jjTime = 230,
         pass = 5,
-
         parkours = {
             A = {30, 35, 27, 29},
             B = {27, 30, 27, 25},
             C = {25, 27, 27, 30},
-            D = {27, 25, 30, 30},
-        },
-
-        tower = {
-            ["PC e CONSOLE"] = 15,
-            ["CELULAR"] = 16,
+            D = {27, 25, 25, 30},
         },
     },
 }
 
--- =========================================================
--- ESTADO
--- =========================================================
-
-local state = {
-    role = "Praças",
-    version = "A",
-    device = "PC e CONSOLE",
-
-    participants = {},
-    nextId = 0,
-
-    rankNick = "",
-    rankPoints = "",
+local TEXT_TIME = 400
+local QUESTION_TIME = 40
+local TOWER_LIMITS = {
+    ["PC/Console"] = 15,
+    ["Celular"] = 16,
 }
 
--- =========================================================
--- CORES
--- =========================================================
+local role = "Praças"
+local version = "A"
+local device = "PC/Console"
 
-local GREEN = Color3.fromHex("#31C46B")
-local BLUE = Color3.fromHex("#3D82F6")
-local ORANGE = Color3.fromHex("#E29A3B")
-local RED = Color3.fromHex("#E24B4B")
-local GRAY = Color3.fromHex("#8C93A1")
+local participants = {}
+local nextId = 0
 
 -- =========================================================
--- FUNÇÕES
+-- UTILITÁRIOS
 -- =========================================================
+local function trim(value)
+    return tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+end
 
-local function notify(title, content, icon)
+local function notify(title, content)
     WindUI:Notify({
         Title = title,
         Content = content,
-        Icon = icon or "info",
-        Duration = 3,
     })
 end
 
-local function trim(value)
-    return tostring(value or "")
-        :gsub("^%s+", "")
-        :gsub("%s+$", "")
+local function getRules()
+    return RULES[role]
 end
 
-local function newParticipant(name)
-    state.nextId += 1
-
-    return {
-        id = state.nextId,
-        name = name,
-
-        score = 0,
-
-        awards = {
-            JJ = 0,
-            P1 = 0,
-            P2 = 0,
-            P3 = 0,
-            P4 = 0,
-            TEXT = 0,
-            QUESTION = 0,
-        },
-
-        timers = {},
-
-        jjCount = "",
-        textErrors = "",
-        theme = true,
-    }
-end
-
-local function award(participant, key, points)
-    participant.score -= participant.awards[key] or 0
-    participant.awards[key] = math.max(0, points)
-    participant.score += participant.awards[key]
-end
-
-local function startOrStopTimer(participant, key, limit, onFinish)
-    local timer = participant.timers[key]
-
-    if not timer then
-        participant.timers[key] = {
-            started = os.clock(),
-        }
-
-        notify(
-            "Cronômetro iniciado",
-            participant.name .. " • " .. key,
-            "play"
-        )
-
-        return
+local function calculateScore(p)
+    local total = 0
+    for _, value in pairs(p.awards) do
+        total += tonumber(value) or 0
     end
-
-    if timer.elapsed then
-        notify(
-            "Cronômetro finalizado",
-            key .. " • " .. timer.elapsed .. "s",
-            "timer"
-        )
-        return
-    end
-
-    timer.elapsed = math.floor(
-        os.clock() - timer.started + 0.5
-    )
-
-    local passed = timer.elapsed <= limit
-
-    if onFinish then
-        onFinish(passed, timer.elapsed)
-    end
+    return total
 end
 
-local function getStatus(participant)
-    local required = RULES[state.role].pass
-
-    if participant.score >= required then
+local function statusText(p)
+    local score = calculateScore(p)
+    if score >= getRules().pass then
         return "APROVADO"
     end
-
     return "EM AVALIAÇÃO"
 end
 
-local function getTimerTitle(participant, key)
-    local timer = participant.timers[key]
+local function timerText(p, key, label)
+    local timer = p.timers[key]
 
     if not timer then
-        return key .. " • Iniciar"
+        return label .. " • iniciar"
     end
 
     if not timer.elapsed then
-        local elapsed = math.floor(
-            os.clock() - timer.started + 0.5
-        )
-
-        return key .. " • " .. elapsed .. "s • Parar"
+        local live = math.floor(os.clock() - timer.started)
+        return string.format("%s • %ds...", label, live)
     end
 
-    return key .. " • " .. timer.elapsed .. "s"
+    return string.format("%s • %ds", label, timer.elapsed)
 end
 
 -- =========================================================
--- WINDOW WINDUI
+-- JANELA WINDUI
 -- =========================================================
-
 local Window = WindUI:CreateWindow({
-    Title = "TREINAMENTO FÍSICO",
-    Icon = "clipboard-check",
-    Folder = "TreinamentoFisico",
+    Title = "Exército Brasileiro do Delta",
+    Icon = "shield-check",
+    Folder = "EBDelta_TreinamentoFisico",
     NewElements = true,
+    HideSearchBar = false,
+
+    OpenButton = {
+        Title = "Abrir Treinamento",
+        Enabled = true,
+        Draggable = true,
+        OnlyMobile = false,
+        Scale = 0.8,
+    },
 
     Topbar = {
         Height = 44,
         ButtonsType = "Mac",
     },
-
-    OpenButton = {
-        Title = "Abrir Treinamento",
-        CornerRadius = UDim.new(1, 0),
-        StrokeThickness = 2,
-        Enabled = true,
-        Draggable = true,
-        OnlyMobile = false,
-        Scale = 0.55,
-
-        Color = ColorSequence.new(
-            Color3.fromHex("#31C46B"),
-            Color3.fromHex("#3D82F6")
-        ),
-    },
 })
 
 Window:Tag({
-    Title = "WINDUI",
-    Icon = "layers",
-    Color = GREEN,
+    Title = "EB DELTA",
+    Icon = "shield-check",
+    Border = true,
+})
+
+Window:Tag({
+    Title = "TREINAMENTO FÍSICO",
+    Icon = "clipboard-check",
     Border = true,
 })
 
 -- =========================================================
--- TABS
+-- SEÇÕES / ABAS
 -- =========================================================
-
 local EvaluationTab = Window:Tab({
     Title = "Avaliação",
-    Desc = "Avaliação dos participantes",
     Icon = "clipboard-check",
-    IconColor = GREEN,
-    IconShape = "Square",
     Border = true,
 })
 
-local RankTab = Window:Tab({
-    Title = "Patente",
-    Desc = "Entrega de pontos",
-    Icon = "medal",
-    IconColor = ORANGE,
-    IconShape = "Square",
+local CommandsTab = Window:Tab({
+    Title = "Comandos",
+    Icon = "terminal",
     Border = true,
 })
 
-local HelpTab = Window:Tab({
-    Title = "Ajuda",
-    Desc = "Regras do treinamento",
+local RulesTab = Window:Tab({
+    Title = "Regras",
+    Icon = "book-open",
+    Border = true,
+})
+
+local AboutTab = Window:Tab({
+    Title = "Sobre",
     Icon = "info",
-    IconColor = BLUE,
-    IconShape = "Square",
     Border = true,
 })
 
 -- =========================================================
--- AVALIAÇÃO • CONFIGURAÇÃO
+-- AVALIAÇÃO
 -- =========================================================
-
-EvaluationTab:Section({
-    Title = "CONFIGURAÇÃO DA AVALIAÇÃO",
-    TextSize = 18,
+local ConfigSection = EvaluationTab:Section({
+    Title = "Configuração do treinamento",
+    Box = true,
     Opened = true,
 })
 
-local roleDropdown = EvaluationTab:Dropdown({
-    Title = "Patente",
-    Desc = "Selecione Praças ou Graduados",
+local roleDropdown = ConfigSection:Dropdown({
+    Title = "Marcação",
     Values = {"Praças", "Graduados"},
-    Value = state.role,
-
+    Value = role,
+    AllowNone = false,
     Callback = function(value)
-        state.role = value
-        refreshParticipants()
-        updateRules()
+        role = value
+        refreshParticipantCards()
     end,
 })
 
-local versionDropdown = EvaluationTab:Dropdown({
+local versionDropdown = ConfigSection:Dropdown({
     Title = "Versão do Parkour",
-    Desc = "A, B, C ou D",
     Values = {"A", "B", "C", "D"},
-    Value = state.version,
-
+    Value = version,
+    AllowNone = false,
     Callback = function(value)
-        state.version = value
-        refreshParticipants()
-        updateRules()
+        version = value
+        refreshParticipantCards()
     end,
 })
 
-local deviceDropdown = EvaluationTab:Dropdown({
-    Title = "Torre",
-    Desc = "Dispositivo utilizado",
-    Values = {"PC e CONSOLE", "CELULAR"},
-    Value = state.device,
-
+local deviceDropdown = ConfigSection:Dropdown({
+    Title = "Dispositivo da Torre",
+    Values = {"PC/Console", "Celular"},
+    Value = device,
+    AllowNone = false,
     Callback = function(value)
-        state.device = value
-        updateRules()
+        device = value
+        refreshParticipantCards()
     end,
 })
 
-local rulesParagraph = EvaluationTab:Paragraph({
+local RulesSection = EvaluationTab:Section({
+    Title = "Resumo da avaliação",
+    Box = true,
+    Opened = true,
+})
+
+local rulesParagraph = RulesSection:Paragraph({
     Title = "Regras atuais",
     Desc = "",
 })
 
-function updateRules()
-    local rules = RULES[state.role]
-    local parkours = rules.parkours[state.version]
-    local towerTime = rules.tower[state.device]
-
-    rulesParagraph:SetDesc(string.format(
-        "%s\n\nJJ: %d em %ds\n" ..
-        "P1: %ds • P2: %ds • P3: %ds • P4: %ds\n" ..
-        "Torre: %ds\n" ..
-        "Mínimo para aprovação: %d pontos",
-        state.role,
-        rules.jj,
-        rules.jjTime,
-        parkours[1],
-        parkours[2],
-        parkours[3],
-        parkours[4],
-        towerTime,
-        rules.pass
-    ))
-end
-
--- =========================================================
--- PARTICIPANTES
--- =========================================================
-
-EvaluationTab:Section({
-    Title = "ADICIONAR PARTICIPANTE",
-    TextSize = 18,
+local AddSection = EvaluationTab:Section({
+    Title = "Participantes",
+    Box = true,
     Opened = true,
 })
 
-local pendingName = ""
-
-EvaluationTab:Input({
-    Title = "Nome",
-    Desc = "Nome/Nick do participante",
-    Placeholder = "Digite o nome...",
-    InputIcon = "user",
+local participantInput = AddSection:Input({
+    Title = "Adicionar participante",
+    Placeholder = "Digite o Nick exato",
     Callback = function(value)
-        pendingName = trim(value)
+        participantInputValue = value
     end,
 })
 
-EvaluationTab:Button({
-    Title = "Adicionar participante",
-    Desc = "Adicionar à lista de avaliação",
+local addParticipantButton = AddSection:Button({
+    Title = "Adicionar",
     Icon = "user-plus",
-    Color = GREEN,
-
     Callback = function()
-        if pendingName == "" then
-            notify(
-                "Nome vazio",
-                "Digite o nome do participante.",
-                "circle-alert"
-            )
+        local name = trim(participantInputValue)
+
+        if name == "" then
+            notify("EB Delta", "Digite o Nick do participante.")
             return
         end
 
-        table.insert(
-            state.participants,
-            newParticipant(pendingName)
-        )
+        nextId += 1
 
-        pendingName = ""
+        table.insert(participants, {
+            id = nextId,
+            name = name,
 
-        refreshParticipants()
+            awards = {
+                JJ = 0,
+                P1 = 0,
+                P2 = 0,
+                P3 = 0,
+                P4 = 0,
+                TEXT = 0,
+                QUESTION = 0,
+            },
 
-        notify(
-            "Participante adicionado",
-            "O participante foi adicionado à avaliação.",
-            "circle-check"
-        )
+            timers = {},
+
+            jjCount = "",
+            textErrors = "",
+            textTheme = true,
+            questionCorrect = false,
+        })
+
+        participantInputValue = ""
+        notify("Participante", name .. " foi adicionado.")
+        refreshParticipantCards()
     end,
 })
 
-local participantSections = {}
+local ParticipantsSection = EvaluationTab:Section({
+    Title = "Avaliações individuais",
+    Box = true,
+    Opened = true,
+})
 
-function clearParticipantSections()
-    for _, section in ipairs(participantSections) do
-        pcall(function()
-            section:Destroy()
-        end)
-    end
+local participantElements = {}
 
-    table.clear(participantSections)
+-- =========================================================
+-- DECLARAÇÕES ANTECIPADAS
+-- =========================================================
+refreshParticipantCards = function() end
+
+local function refreshRules()
+    local r = getRules()
+    local p = r.parkours[version]
+
+    rulesParagraph:SetDesc(string.format(
+        "Marcação: %s\nJJ: %d em %ds\nParkour %s: P1 %ds • P2 %ds • P3 %ds • P4 %ds\nTorre: %ds (%s)\nTexto: %ds\nPergunta: %ds\nAprovação: %d pontos",
+        role,
+        r.jj,
+        r.jjTime,
+        version,
+        p[1], p[2], p[3], p[4],
+        TOWER_LIMITS[device],
+        device,
+        TEXT_TIME,
+        QUESTION_TIME,
+        r.pass
+    ))
 end
 
-function refreshParticipants()
-    clearParticipantSections()
+local function removeParticipant(id)
+    for index, p in ipairs(participants) do
+        if p.id == id then
+            table.remove(participants, index)
+            break
+        end
+    end
 
-    if #state.participants == 0 then
-        local empty = EvaluationTab:Section({
-            Title = "PARTICIPANTES",
-            Box = true,
-            Opened = true,
-        })
+    refreshParticipantCards()
+end
 
-        empty:Paragraph({
-            Title = "Nenhum participante",
-            Desc = "Adicione um participante acima para começar.",
-        })
+local function setAward(p, key, value)
+    p.awards[key] = math.max(0, tonumber(value) or 0)
+end
 
-        table.insert(participantSections, empty)
+local function finishTimer(p, key, limit, awardKey)
+    local timer = p.timers[key]
+
+    if not timer then
+        p.timers[key] = {
+            started = os.clock(),
+        }
+        refreshParticipantCards()
         return
     end
 
-    local rules = RULES[state.role]
-    local limits = rules.parkours[state.version]
+    if timer.elapsed then
+        return
+    end
 
-    for _, participant in ipairs(state.participants) do
-        local section = EvaluationTab:Section({
-            Title = participant.name,
-            Desc = string.format(
-                "%d/9 • %s",
-                participant.score,
-                getStatus(participant)
-            ),
+    timer.elapsed = math.floor(os.clock() - timer.started + 0.5)
+    setAward(p, awardKey or key, timer.elapsed <= limit and 1 or 0)
+
+    refreshParticipantCards()
+end
+
+local function calculateText(p)
+    local errors = tonumber(p.textErrors)
+
+    if not errors then
+        setAward(p, "TEXT", 0)
+        notify("Texto", "Informe a quantidade de erros.")
+        return
+    end
+
+    if not p.textTheme then
+        setAward(p, "TEXT", 0)
+    elseif errors == 0 then
+        setAward(p, "TEXT", 2)
+    elseif errors <= 3 then
+        setAward(p, "TEXT", 1)
+    else
+        setAward(p, "TEXT", 0)
+    end
+
+    refreshParticipantCards()
+end
+
+local function setQuestion(p, correct)
+    p.questionCorrect = correct
+    setAward(p, "QUESTION", correct and 1 or 0)
+    refreshParticipantCards()
+end
+
+refreshParticipantCards = function()
+    refreshRules()
+
+    for _, element in ipairs(participantElements) do
+        pcall(function()
+            element:Destroy()
+        end)
+    end
+
+    table.clear(participantElements)
+
+    local r = getRules()
+    local limits = r.parkours[version]
+
+    if #participants == 0 then
+        local empty = ParticipantsSection:Paragraph({
+            Title = "Nenhum participante",
+            Desc = "Adicione um Nick acima para começar a avaliação.",
+        })
+
+        table.insert(participantElements, empty)
+        return
+    end
+
+    for _, p in ipairs(participants) do
+        local score = calculateScore(p)
+        local approved = score >= r.pass
+
+        local section = ParticipantsSection:Section({
+            Title = p.name .. " • " .. score .. "/9 • " .. statusText(p),
             Box = true,
             Opened = true,
         })
 
-        table.insert(participantSections, section)
+        table.insert(participantElements, section)
 
         section:Paragraph({
-            Title = "Pontuação",
+            Title = "Resumo",
             Desc = string.format(
-                "Total: %d/9\n" ..
-                "JJ: %d • P1: %d • P2: %d • P3: %d • P4: %d\n" ..
-                "Texto: %d • Pergunta: %d",
-                participant.score,
-                participant.awards.JJ,
-                participant.awards.P1,
-                participant.awards.P2,
-                participant.awards.P3,
-                participant.awards.P4,
-                participant.awards.TEXT,
-                participant.awards.QUESTION
+                "Aprovação: %d pontos | Pontuação atual: %d/9\nJJ: %d | P1: %d | P2: %d | P3: %d | P4: %d | Texto: %d | Pergunta: %d",
+                r.pass,
+                score,
+                p.awards.JJ,
+                p.awards.P1,
+                p.awards.P2,
+                p.awards.P3,
+                p.awards.P4,
+                p.awards.TEXT,
+                p.awards.QUESTION
             ),
         })
 
         section:Input({
-            Title = "JJs feitos",
-            Desc = string.format(
-                "Meta: %d JJs • limite: %ds",
-                rules.jj,
-                rules.jjTime
-            ),
-            Placeholder = "Quantidade de JJs",
-            Value = participant.jjCount,
-            InputIcon = "activity",
-
+            Title = "Quantidade de JJs",
+            Placeholder = "Ex.: " .. r.jj,
+            Value = p.jjCount,
             Callback = function(value)
-                participant.jjCount = trim(value)
+                p.jjCount = value
             end,
         })
 
         section:Button({
-            Title = getTimerTitle(participant, "JJ"),
-            Desc = string.format(
-                "%d JJs em até %ds",
-                rules.jj,
-                rules.jjTime
-            ),
+            Title = timerText(p, "JJ", "JJ"),
             Icon = "timer",
-            Color = GREEN,
-
             Callback = function()
-                local count = tonumber(participant.jjCount) or 0
+                local count = tonumber(p.jjCount) or 0
+                local timer = p.timers.JJ
 
-                startOrStopTimer(
-                    participant,
-                    "JJ",
-                    rules.jjTime,
+                if not timer then
+                    p.timers.JJ = {
+                        started = os.clock(),
+                    }
+                    refreshParticipantCards()
+                    return
+                end
 
-                    function(passed, elapsed)
-                        award(
-                            participant,
-                            "JJ",
-                            passed and count >= rules.jj and 1 or 0
-                        )
+                if timer.elapsed then
+                    return
+                end
 
-                        notify(
-                            passed and count >= rules.jj
-                                and "JJ aprovado"
-                                or "JJ não aprovado",
+                timer.elapsed = math.floor(os.clock() - timer.started + 0.5)
 
-                            string.format(
-                                "%s • %d JJs • %ds",
-                                participant.name,
-                                count,
-                                elapsed
-                            ),
+                local passed = count >= r.jj and timer.elapsed <= r.jjTime
+                setAward(p, "JJ", passed and 1 or 0)
 
-                            passed and count >= rules.jj
-                                and "circle-check"
-                                or "circle-x"
-                        )
-                    end
-                )
-
-                refreshParticipants()
+                refreshParticipantCards()
             end,
         })
 
-        for parkour = 1, 4 do
-            local key = "P" .. parkour
-            local limit = limits[parkour]
+        section:Button({
+            Title = timerText(p, "P1", "Parkour 1"),
+            Icon = "timer",
+            Callback = function()
+                finishTimer(p, "P1", limits[1], "P1")
+            end,
+        })
 
-            section:Button({
-                Title = getTimerTitle(participant, key),
-                Desc = "Limite: " .. limit .. " segundos",
-                Icon = "timer",
+        section:Button({
+            Title = timerText(p, "P2", "Parkour 2"),
+            Icon = "timer",
+            Callback = function()
+                finishTimer(p, "P2", limits[2], "P2")
+            end,
+        })
 
-                Callback = function()
-                    startOrStopTimer(
-                        participant,
-                        key,
-                        limit,
+        section:Button({
+            Title = timerText(p, "P3", "Parkour 3"),
+            Icon = "timer",
+            Callback = function()
+                finishTimer(p, "P3", limits[3], "P3")
+            end,
+        })
 
-                        function(passed, elapsed)
-                            award(
-                                participant,
-                                key,
-                                passed and 1 or 0
-                            )
-
-                            notify(
-                                passed
-                                    and "Parkour aprovado"
-                                    or "Parkour não aprovado",
-
-                                string.format(
-                                    "%s • %s • %ds",
-                                    participant.name,
-                                    key,
-                                    elapsed
-                                ),
-
-                                passed
-                                    and "circle-check"
-                                    or "circle-x"
-                            )
-                        end
-                    )
-
-                    refreshParticipants()
-                end,
-            })
-        end
+        section:Button({
+            Title = timerText(p, "P4", "Parkour 4"),
+            Icon = "timer",
+            Callback = function()
+                finishTimer(p, "P4", limits[4], "P4")
+            end,
+        })
 
         section:Input({
             Title = "Erros gramaticais",
-            Desc = "0 = 2 pontos • 1-3 = 1 ponto • +3 = 0",
-            Placeholder = "Quantidade de erros",
-            Value = participant.textErrors,
-            InputIcon = "file-text",
-
+            Placeholder = "0, 1, 2, 3...",
+            Value = p.textErrors,
             Callback = function(value)
-                participant.textErrors = trim(value)
+                p.textErrors = value
+            end,
+        })
+
+        section:Toggle({
+            Title = "Texto dentro do tema",
+            Value = p.textTheme,
+            Callback = function(value)
+                p.textTheme = value
+                calculateText(p)
             end,
         })
 
         section:Button({
             Title = "Calcular texto",
-            Desc = "Aplicar a pontuação gramatical",
-            Icon = "calculator",
-            Color = ORANGE,
-
+            Icon = "file-check",
             Callback = function()
-                local errors =
-                    tonumber(participant.textErrors) or 99
+                calculateText(p)
+            end,
+        })
 
-                local points = 0
+        section:Toggle({
+            Title = "Pergunta respondida corretamente",
+            Value = p.questionCorrect,
+            Callback = function(value)
+                setQuestion(p, value)
+            end,
+        })
 
-                if participant.theme and errors == 0 then
-                    points = 2
-                elseif participant.theme and errors <= 3 then
-                    points = 1
-                end
-
-                award(
-                    participant,
-                    "TEXT",
-                    points
-                )
-
-                refreshParticipants()
-
-                notify(
-                    "Texto avaliado",
-                    participant.name
-                        .. " recebeu "
-                        .. points
-                        .. " ponto(s).",
-                    "file-check"
-                )
+        section:Button({
+            Title = "Torre • " .. device .. " • limite " .. TOWER_LIMITS[device] .. "s",
+            Icon = "timer",
+            Callback = function()
+                finishTimer(p, "TOWER", TOWER_LIMITS[device], "TOWER")
             end,
         })
 
         section:Button({
             Title = "Remover participante",
             Icon = "trash-2",
-            Color = RED,
-
             Callback = function()
-                for index, item in ipairs(state.participants) do
-                    if item.id == participant.id then
-                        table.remove(
-                            state.participants,
-                            index
-                        )
-                        break
-                    end
-                end
-
-                refreshParticipants()
-
-                notify(
-                    "Participante removido",
-                    participant.name .. " foi removido.",
-                    "trash-2"
-                )
+                removeParticipant(p.id)
             end,
         })
     end
 end
 
 -- =========================================================
--- PATENTE
+-- COMANDOS
 -- =========================================================
-
-RankTab:Section({
-    Title = "ENTREGA DE PONTOS",
-    TextSize = 18,
+local CommandSection = CommandsTab:Section({
+    Title = "Preparação de comandos",
+    Box = true,
     Opened = true,
 })
 
-RankTab:Paragraph({
-    Title = "Preparação manual",
-    Desc = "Confira o Nick e a quantidade de pontos antes da entrega.",
+CommandSection:Paragraph({
+    Title = "Uso manual",
+    Desc = "Os comandos abaixo são apenas textos de referência. O painel não executa comandos administrativos.",
 })
 
-RankTab:Input({
+local commandNick = ""
+local commandText = ""
+
+CommandSection:Input({
     Title = "Nick",
     Placeholder = "Nick exato",
-    InputIcon = "user",
-
     Callback = function(value)
-        state.rankNick = trim(value)
+        commandNick = trim(value)
     end,
 })
 
-RankTab:Input({
-    Title = "Pontos",
-    Placeholder = "Ex.: 5",
-    InputIcon = "star",
-
-    Callback = function(value)
-        state.rankPoints =
-            trim(value):gsub("%D", "")
-    end,
-})
-
-local commandOutput = RankTab:Input({
-    Title = "Comando preparado",
-    Type = "Textarea",
-    Placeholder = "O comando aparecerá aqui...",
-    InputIcon = "terminal",
-})
-
-RankTab:Button({
-    Title = "Preparar comando",
-    Icon = "terminal",
-    Color = GREEN,
-
+CommandSection:Button({
+    Title = "Preparar ;titler",
+    Icon = "badge",
     Callback = function()
-        if state.rankNick == ""
-            or state.rankPoints == "" then
-
-            commandOutput:Set(
-                "Preencha Nick e pontos."
-            )
-
-            notify(
-                "Campos incompletos",
-                "Informe Nick e pontos.",
-                "circle-alert"
-            )
-
+        if commandNick == "" then
+            notify("Comando", "Informe o Nick.")
             return
         end
 
-        local command =
-            ";titler "
-            .. state.rankNick
-            .. " "
-            .. state.rankPoints
-
-        commandOutput:Set(command)
-
-        notify(
-            "Comando preparado",
-            "Confira o comando antes da utilização.",
-            "circle-check"
-        )
+        commandText = ";titler " .. commandNick
+        notify("Comando preparado", commandText)
     end,
 })
 
--- =========================================================
--- AJUDA
--- =========================================================
+CommandSection:Paragraph({
+    Title = "Comandos do documento",
+    Desc = ";countdown (Tempo)\n;h (Mensagem)\n;title (Nick)\n;kick (Nick)\n\nUse-os somente conforme as permissões e regras da experiência.",
+})
 
-HelpTab:Section({
-    Title = "COMO USAR",
-    TextSize = 18,
+-- =========================================================
+-- REGRAS
+-- =========================================================
+local OfficialSection = RulesTab:Section({
+    Title = "Regras oficiais do Treinamento Físico",
+    Box = true,
     Opened = true,
 })
 
-HelpTab:Paragraph({
-    Title = "Avaliação",
-    Desc =
-        "1. Escolha a patente.\n" ..
-        "2. Escolha a versão.\n" ..
-        "3. Escolha a torre.\n" ..
-        "4. Adicione os participantes.\n" ..
-        "5. Faça as avaliações e cronômetros.\n" ..
-        "6. Confira a pontuação final.",
+OfficialSection:Paragraph({
+    Title = "Antes do treinamento",
+    Desc = "Não poste o anúncio sem estar dentro do servidor. Organize os participantes, aguarde a tolerância informada e siga as orientações do instrutor.",
 })
 
-HelpTab:Section({
-    Title = "CRITÉRIOS",
-    TextSize = 18,
-    Opened = true,
+OfficialSection:Paragraph({
+    Title = "JJ's",
+    Desc = "Praças: 150 em 210s.\nGraduados: 170 em 230s.\nVale 1 ponto.",
 })
 
-HelpTab:Paragraph({
-    Title = "Praças",
-    Desc =
-        "JJ: 150 em 210s.\n" ..
-        "Mínimo para aprovação: 4 pontos.",
-})
-
-HelpTab:Paragraph({
-    Title = "Graduados",
-    Desc =
-        "JJ: 170 em 230s.\n" ..
-        "Mínimo para aprovação: 5 pontos.",
-})
-
-HelpTab:Paragraph({
+OfficialSection:Paragraph({
     Title = "Texto gramatical",
-    Desc =
-        "400 segundos.\n" ..
-        "0 erros = 2 pontos.\n" ..
-        "1 a 3 erros = 1 ponto.\n" ..
-        "Mais de 3 erros = 0 pontos.",
+    Desc = "400 segundos. Mínimo de 3 linhas. Tema: Exército Brasileiro ou Exército Brasileiro do Delta.\n0 erros = 2 pontos.\n1 a 3 erros = 1 ponto.\nMais de 3 erros ou fuga do tema = 0.",
 })
 
-HelpTab:Paragraph({
+OfficialSection:Paragraph({
     Title = "Parkours",
-    Desc =
-        "Cada parkour vale 1 ponto.\n" ..
-        "Os tempos são alterados automaticamente " ..
-        "conforme patente e versão selecionadas.",
+    Desc = "Cada parkour vale 1 ponto.\n\nPraças:\nA 35/40/30/32\nB 30/35/30/28\nC 30/35/35/40\nD 35/30/30/40\n\nGraduados:\nA 30/35/27/29\nB 27/30/27/25\nC 25/27/27/30\nD 27/25/25/30.",
 })
 
-HelpTab:Section({
-    Title = "TORRE",
-    TextSize = 18,
+OfficialSection:Paragraph({
+    Title = "Torre",
+    Desc = "PC/Console: 15 segundos.\nCelular: 16 segundos.",
+})
+
+OfficialSection:Paragraph({
+    Title = "Perguntas",
+    Desc = "1 pergunta relacionada ao EB do Delta ou ao Exército Brasileiro.\nTimer de 40 segundos.\nSó recebe ponto quem acertar.",
+})
+
+OfficialSection:Paragraph({
+    Title = "Aprovação",
+    Desc = "Praças: mínimo 4 pontos.\nGraduados: mínimo 5 pontos.\nMáximo informado no documento: 9 pontos.",
+})
+
+OfficialSection:Paragraph({
+    Title = "Conduta",
+    Desc = "Sem favoritismo. Siga as mesmas condições para todos os avaliados. O documento também proíbe meio ponto, pontos extras por desempenho e outras alterações das regras.",
+})
+
+-- =========================================================
+-- SOBRE
+-- =========================================================
+local AboutSection = AboutTab:Section({
+    Title = "Exército Brasileiro do Delta",
+    Box = true,
     Opened = true,
 })
 
-HelpTab:Paragraph({
-    Title = "Tempos",
-    Desc =
-        "PC e CONSOLE: 15 segundos.\n" ..
-        "CELULAR: 16 segundos.",
+AboutSection:Paragraph({
+    Title = "Treinamento Físico",
+    Desc = "Painel de apoio ao instrutor para organização manual das avaliações de Praças e Graduados.",
 })
 
-HelpTab:Section({
-    Title = "PERGUNTAS",
-    TextSize = 18,
-    Opened = true,
+AboutSection:Paragraph({
+    Title = "WindUI",
+    Desc = "Interface construída usando a API oficial do projeto WindUI, sem fork/modificação da biblioteca.",
 })
 
-HelpTab:Paragraph({
-    Title = "Avaliação manual",
-    Desc =
-        "1 pergunta vale 1 ponto.\n" ..
-        "O instrutor deve conferir a resposta manualmente.\n" ..
-        "O timer indicado no documento é de 40 segundos.",
+AboutSection:Paragraph({
+    Title = "Importante",
+    Desc = "Este painel não substitui a validação do servidor, não lê dados ocultos e não executa comandos administrativos automaticamente.",
 })
 
 -- =========================================================
 -- INICIALIZAÇÃO
 -- =========================================================
-
-updateRules()
-refreshParticipants()
+refreshParticipantCards()
 
 notify(
-    "Treinamento Físico",
-    "WindUI carregado com sucesso.",
-    "circle-check"
+    "EB Delta",
+    "Painel de Treinamento Físico carregado."
 )
